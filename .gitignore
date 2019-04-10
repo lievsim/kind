@@ -50,3 +50,9 @@ modules.order
 Module.symvers
 Mkfile.old
 dkms.conf
+
+# CMake debug files
+cmake-build-debug/
+
+# Intelliji IDE
+.idea/
