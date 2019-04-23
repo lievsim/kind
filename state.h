@@ -7,10 +7,7 @@
 
 enum state{
     LOCKED=0,
-    UNLOCKED,
-    ADDING,
-    DELETING,
-    CHANGINGPWD
+    UNLOCKED
 };
 
 #endif //DEV_STATE_H
