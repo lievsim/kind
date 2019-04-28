@@ -5,13 +5,42 @@
 #include <string.h>
 #include "state.h"
 #include "cmd.h"
+#include "csv.h"
+#include "base64.h"
 
-#define KEY_SIZE crypto_box_SEEDBYTES
-#define PWD_SIZE 32
+// Global values
+#define DB "/.kind/db.csv"
+#define KEY_LEN crypto_box_SEEDBYTES // crypto_secretbox_KEYBYTES
+#define PWD_LEN 32
+#define LINE_LEN 2048
+#define URL_LEN 128
+
+// Global variables
+char *filename;
+FILE *db;
+enum state state;
+unsigned char masterKey[crypto_secretbox_KEYBYTES];
 
 void sigHandler(int signum){
-    printf("\nCaught signal %d, exiting...", signum);
+    printf("Caught signal %d, exiting...\n", signum);
     exit(EXIT_FAILURE);
+}
+
+void init(){
+
+    filename = getenv("HOME");
+    strcat(filename, DB);
+
+    state = LOCKED;
+
+    // Initializing libsodium library
+    if (sodium_init() < 0) {
+        printf("Fatal error. Libsodium initialization failed. Exiting...");
+        exit(EXIT_FAILURE);
+    }
+
+    // Registering a signal handler
+    signal(SIGINT, sigHandler);
 }
 
 void help(){
@@ -23,146 +52,291 @@ void help(){
     printf("[5] LST: lists all passwords. \n");
 }
 
-int main() {
+void createDB(){
 
-    // Scope variables
-    unsigned char *key;
-    char *pwd;
-    char *filename;
-    char hash[crypto_pwhash_STRBYTES];
+    unsigned char nonce[crypto_secretbox_NONCEBYTES];
+    char *encodedNonce;
+    unsigned char encryptedMasterKey[crypto_secretbox_MACBYTES+sizeof(masterKey)];
+    char *encodedEncryptedMasterKey;
+    unsigned char derivedKey[KEY_LEN];
     unsigned char salt[crypto_pwhash_SALTBYTES];
-    FILE *db;
-    enum state s = LOCKED;
+    char *encodedSalt;
+    char hash[crypto_pwhash_STRBYTES];
+    char *pwd;
+    size_t eSaltLen, eNonceLen, eEncMasterKeyLen;
 
-    // Initializing libsodium library
-    if (sodium_init() < 0) {
-        printf("Fatal error. Libsodium initialization failed. Exiting...");
+    printf("Database not found under %s. Creating a new one...\n", filename);
+
+    // Generating a master key
+    crypto_secretbox_keygen(masterKey);
+
+    // Getting random values for nonce and salt
+    randombytes_buf(nonce, sizeof(nonce));
+    randombytes_buf(salt, sizeof(salt));
+
+    // Reading the password
+    pwd = sodium_malloc(PWD_LEN);
+    printf("Enter a master password: ");
+    scanf("%s", pwd);
+    printf("\n");
+
+    // Hashing the password
+    if(crypto_pwhash_str(hash, pwd, strlen(pwd), crypto_pwhash_OPSLIMIT_SENSITIVE, crypto_pwhash_MEMLIMIT_SENSITIVE) != 0){
+        sodium_free(pwd);
+        printf("Fatal error. Program ran out ouf memory. Exiting...\n");
         exit(EXIT_FAILURE);
     }
 
-    // Registering a signal handler
-    signal(SIGINT, sigHandler);
+    // Deriving a key to encrypt the master key
+    if (crypto_pwhash(derivedKey, sizeof(derivedKey), pwd, strlen(pwd), salt, crypto_pwhash_OPSLIMIT_SENSITIVE, crypto_pwhash_MEMLIMIT_SENSITIVE, crypto_pwhash_ALG_DEFAULT) != 0) {
+        sodium_free(pwd);
+        printf("Fatal error. Program ran out ouf memory. Exiting...\n");
+        exit(EXIT_FAILURE);
+    }
 
-    // Securely allocating memory. Avoid swapping data to the disk.
-    key = sodium_malloc(KEY_SIZE);
-    pwd = sodium_malloc(PWD_SIZE);
+    // We don't need the password anymore. Freeing memory
+    sodium_memzero(pwd, PWD_LEN);
+
+    // Encrypting the master key
+    crypto_secretbox_easy(encryptedMasterKey, masterKey, sizeof(masterKey), nonce, derivedKey);
+
+    // Encoding hash, salt and nonce
+    encodedSalt = base64_encode(salt, sizeof(salt), &eSaltLen);
+    encodedNonce = base64_encode(nonce, sizeof(nonce), &eNonceLen);
+    encodedEncryptedMasterKey = base64_encode(encryptedMasterKey, sizeof(encryptedMasterKey), &eEncMasterKeyLen);
+
+    // Writing into the database
+    db = fopen(filename, "w+");
+    fprintf(db, "%s;%ld;%s;%ld;%s;%ld;%s\n", hash, eSaltLen, encodedSalt, eNonceLen, encodedNonce, eEncMasterKeyLen, encodedEncryptedMasterKey);
+    fclose(db);
+
+    // Freeing the memory allocations and clearing memory
+    memset(masterKey, 0, sizeof(masterKey));
+    free(encodedSalt);
+    free(encodedNonce);
+    free(encodedEncryptedMasterKey);
+}
+
+void unlock(){
+
+    unsigned char *nonce;
+    char *encodedNonce;
+    unsigned char *encryptedMasterKey;
+    char *encodedEncryptedMasterKey;
+    unsigned char derivedKey[KEY_LEN];
+    unsigned char *salt;
+    char *encodedSalt;
+    char *hash;
+    char *pwd;
+    char line[LINE_LEN];
+    char **parsedFields;
+    size_t eSaltLen, eNonceLen, eEncMasterKeyLen;
+    size_t saltLen, nonceLen, encMasterKeyLen;
+
+    // Reading the database
+    db = fopen(filename, "r");
+    fgets(line, LINE_LEN, db);
+    fclose(db);
+
+    // Parsing the line
+    parsedFields = parse_csv(line);
+    if(!parsedFields[0] || !parsedFields[1] || !parsedFields[2] || !parsedFields[3] || !parsedFields[4] || !parsedFields[5] || !parsedFields[6]){
+        printf("Malformed database. Exiting...\n");
+        exit(EXIT_FAILURE);
+    }
+    hash = parsedFields[0];
+    eSaltLen = strtoul(parsedFields[1], NULL, 10);
+    encodedSalt = parsedFields[2];
+    eNonceLen = strtoul(parsedFields[3], NULL, 10);
+    encodedNonce = parsedFields[4];
+    eEncMasterKeyLen = strtoul(parsedFields[5], NULL, 10);
+    encodedEncryptedMasterKey = parsedFields[6];
+
+    // Decoding the fields
+    salt = base64_decode(encodedSalt, eSaltLen, &saltLen);
+    nonce = base64_decode(encodedNonce, eNonceLen, &nonceLen);
+    encryptedMasterKey = base64_decode(encodedEncryptedMasterKey, eEncMasterKeyLen, &encMasterKeyLen);
+
+    // Checking the password
+    pwd = sodium_malloc(PWD_LEN);
+    while(true){
+        printf("Master password: ");
+        scanf("%s", pwd);
+        printf("\n");
+        if (crypto_pwhash_str_verify(hash, pwd, strlen(pwd)) != 0) {
+            printf("Wrong password \n");
+            continue;
+        }
+        break;
+    }
+
+    // Deriving symmetric key
+    if (crypto_pwhash(derivedKey, sizeof(derivedKey), pwd, strlen(pwd), salt, crypto_pwhash_OPSLIMIT_SENSITIVE, crypto_pwhash_MEMLIMIT_SENSITIVE, crypto_pwhash_ALG_DEFAULT) != 0) {
+        sodium_free(pwd);
+        printf("Fatal error. Program ran out ouf memory. Exiting...\n");
+        exit(EXIT_FAILURE);
+    }
+
+    // We don't need the password anymore. Freeing memory
+    sodium_memzero(pwd, PWD_LEN);
+
+    // Decrypting the master key
+    if (crypto_secretbox_open_easy(masterKey, encryptedMasterKey, encMasterKeyLen, nonce, derivedKey) != 0) {
+        printf("Forged master key. Exiting...");
+        exit(EXIT_FAILURE);
+    }
+
+    // Freeing memory allocations
+    free_csv_line(parsedFields);
+    free(salt);
+    free(nonce);
+    free(encryptedMasterKey);
+}
+
+void add(){
+    char url[URL_LEN];
+    unsigned char nonce[crypto_secretbox_NONCEBYTES];
+    char *encodedNonce;
+    unsigned char encryptedPwd[crypto_secretbox_MACBYTES+PWD_LEN];
+    char *encodedEncryptedPwd;
+    char *pwd;
+    size_t eNonceLen, eEncPwdLen;
+
+    // Reading user inputs
+    printf("URL: ");
+    scanf("%s", url);
+    printf("\n");
+    pwd = sodium_malloc(PWD_LEN);
+    printf("PWD: ");
+    scanf("%s", pwd);
+    printf("\n");
+
+    // Generating a nonce
+    randombytes_buf(nonce, sizeof nonce);
+
+    // Encrypting the password
+    crypto_secretbox_easy(encryptedPwd, (unsigned char*)pwd, PWD_LEN, nonce, masterKey);
+
+    // We don't need the password anymore. Freeing memory
+    sodium_free(pwd);
+
+    // Encoding nonce, encryptedPassword
+    encodedNonce = base64_encode(nonce, sizeof(nonce), &eNonceLen);
+    encodedEncryptedPwd = base64_encode(encryptedPwd, sizeof(encryptedPwd), &eEncPwdLen);
+
+    // Writing the database
+    db = fopen(filename, "a");
+    fprintf(db, "%s;%ld;%s;%ld;%s\n", url, eNonceLen, encodedNonce, eEncPwdLen, encodedEncryptedPwd);
+    fclose(db);
+
+    // Freeing memory
+    free(encodedNonce);
+    free(encodedEncryptedPwd);
+}
+
+void list(){
+    unsigned char *nonce;
+    unsigned char *encPwd;
+    unsigned char pwd[PWD_LEN];
+    char *encodedNonce;
+    char *encodedEncPwd;
+    char *url;
+    size_t eNonceLen, eEncPwdLen;
+    size_t nonceLen, encPwdLen;
+    char line[LINE_LEN];
+    char **parsedFields;
+
+    // Reading the database
+    db = fopen(filename, "r");
+    int lc = 0;
+    while(fgets(line, LINE_LEN, db) != NULL){
+        if(++lc == 1) continue;
+
+        // Parsing the line
+        parsedFields = parse_csv(line);
+        if(!parsedFields[0] || !parsedFields[1] || !parsedFields[2] || !parsedFields[3] || !parsedFields[4]){
+            printf("Malformed database. Exiting...\n");
+            exit(EXIT_FAILURE);
+        }
+        url = parsedFields[0];
+        eNonceLen = strtoul(parsedFields[1], NULL, 10);
+        encodedNonce = parsedFields[2];
+        eEncPwdLen = strtoul(parsedFields[3], NULL, 10);
+        encodedEncPwd = parsedFields[4];
+
+        // Decoding the fields
+        nonce = base64_decode(encodedNonce, eNonceLen, &nonceLen);
+        encPwd = base64_decode(encodedEncPwd, eEncPwdLen, &encPwdLen);
+
+        // Decrypting the password
+        if (crypto_secretbox_open_easy(pwd, encPwd, encPwdLen, nonce, masterKey) != 0) {
+            printf("Forged password. Exiting...");
+            exit(EXIT_FAILURE);
+        }
+
+        // Showing the results
+        printf("%s\t%s\n", url, pwd);
+
+        // Freeing memory
+        free_csv_line(parsedFields);
+        free(nonce);
+        free(encPwd);
+    }
+    fclose(db);
+
+}
+
+int main() {
+
+    init();
 
     // Checking database
-    filename = getenv("HOME");
-    strcat(filename, "/.kind/db.txt");
     db = fopen(filename, "r");
     if(db == NULL) {
-
-        // Scope variables
-        char answer;
-
-        // Asking for creating a new one
-        printf("Database not found under %s\n", filename);
-        do {
-            printf("Do you want to create a new one [y|n]? ");
-            scanf("%c", &answer);
-        } while (answer != 'y' && answer != 'n');
-
-        // Creating a new one
-        if (answer == 'y') {
-            db = fopen(filename, "w+");
-            printf("Enter a master password: ");
-            scanf("%s", pwd);
-
-            // Generating the salt
-            randombytes_buf(salt, sizeof(salt));
-
-            // Hashing password
-            if(crypto_pwhash_str(hash, pwd, strlen(pwd), crypto_pwhash_OPSLIMIT_SENSITIVE, crypto_pwhash_MEMLIMIT_SENSITIVE) != 0){
-                sodium_free(pwd);
-                sodium_free(key);
-                printf("Fatal error. Program ran out ouf memory. Exiting...\n");
-                exit(EXIT_FAILURE);
-            }
-            sodium_memzero(pwd, PWD_SIZE);
-            fwrite(salt, sizeof(salt), 1, db);
-            fwrite(hash, sizeof(hash), 1, db);
-            fclose(db);
-
-        // Safely exiting...
-        } else {
-            printf("Ok this is your choice. Exiting now...\n");
-            sodium_free(pwd);
-            sodium_free(key);
-            exit(EXIT_SUCCESS);
-        }
+        createDB();
     }
+    fclose(db);
 
     // Final State Machine (FSM)
     while(true){
 
         // LOCKED State
-        if(s == LOCKED){
-
-            // Scope variables
-            bool isHashCorrect;
-
-            // Cleaning stdout
-            printf("\e[1;1H\e[2J");
-
-            // Checking the master password
-            db = fopen(filename, "r");
-            fread(salt, sizeof(salt), 1, db);
-            fread(hash, sizeof(hash), 1, db);
-            fclose(db);
-            do{
-                isHashCorrect = true;
-                printf("Master password: ");
-                scanf("%s", pwd);
-                if (crypto_pwhash_str_verify(hash, pwd, strlen(pwd)) != 0) {
-                    printf("Wrong password \n");
-                    isHashCorrect = false;
-                }
-            }while(!isHashCorrect);
-
-            // Deriving symmetric key
-            if (crypto_pwhash(key, KEY_SIZE, pwd, strlen(pwd), salt, crypto_pwhash_OPSLIMIT_SENSITIVE, crypto_pwhash_MEMLIMIT_SENSITIVE, crypto_pwhash_ALG_DEFAULT) != 0) {
-                sodium_free(pwd);
-                sodium_free(key);
-                printf("Fatal error. Program ran out ouf memory. Exiting...\n");
-                exit(EXIT_FAILURE);
-            }else{
-                sodium_memzero(pwd, PWD_SIZE);
-                s = UNLOCKED;
-            }
+        if(state == LOCKED){
+            unlock();
+            state = UNLOCKED;
 
         // UNLOCKED State
-        }else if(s == UNLOCKED) {
+        }else if(state == UNLOCKED) {
 
-            // Scope variables
-            unsigned short cmd;
+            int cmd;
 
-            // Showing help
-            printf("\e[1;1H\e[2J");
             help();
 
             // Reading a command
-            do {
+            while(true){
                 printf("Enter a command [%d-%d]: ", EXI, LST);
-                scanf("%hd", &cmd);
-            } while (cmd < EXI || cmd > LST);
+                scanf("%d", &cmd);
+                printf("\n");
+                if(cmd < EXI || cmd > LST){
+                    printf("Command unknown \n");
+                    continue;
+                }
+                break;
+            }
 
             // Exiting
             if (cmd == EXI) {
-                sodium_free(pwd);
-                sodium_free(key);
                 printf("Exiting...\n");
                 break;
 
             // Closing
             } else if (cmd == CLO) {
-                sodium_free(pwd);
-                sodium_free(key);
-                s = LOCKED;
+                memset(masterKey, 0, sizeof(masterKey));
+                state = LOCKED;
 
             // Adding
             } else if (cmd == ADD) {
-
+                add();
 
             // Deleting
             } else if (cmd == DEL) {
@@ -172,8 +346,7 @@ int main() {
 
             // Listing
             } else if (cmd == LST) {
-
-
+                list();
             }
         }
     }

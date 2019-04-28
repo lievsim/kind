@@ -3,5 +3,5 @@ project(kind C)
 
 set(CMAKE_C_STANDARD 99)
 
-add_executable(kind main.c state.h cmd.h)
+add_executable(kind main.c state.h cmd.h csv.c base64.c)
 target_link_libraries(kind sodium)
