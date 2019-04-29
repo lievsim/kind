@@ -12,7 +12,7 @@
 #define DB "/.kind/db.csv"
 #define KEY_LEN crypto_box_SEEDBYTES // crypto_secretbox_KEYBYTES
 #define PWD_LEN 32
-#define LINE_LEN 2048
+#define LINE_LEN 4096
 #define URL_LEN 128
 
 // Global variables
@@ -107,7 +107,7 @@ void createDB(){
     encodedEncryptedMasterKey = base64_encode(encryptedMasterKey, sizeof(encryptedMasterKey), &eEncMasterKeyLen);
 
     // Writing into the database
-    db = fopen(filename, "w+");
+    db = fopen(filename, "w");
     fprintf(db, "%s;%ld;%s;%ld;%s;%ld;%s\n", hash, eSaltLen, encodedSalt, eNonceLen, encodedNonce, eEncMasterKeyLen, encodedEncryptedMasterKey);
     fclose(db);
 
@@ -387,6 +387,96 @@ void delete(){
     }
 }
 
+void changePwd(){
+    unsigned char nonce[crypto_secretbox_NONCEBYTES];
+    char *encodedNonce;
+    unsigned char encryptedMasterKey[crypto_secretbox_MACBYTES+sizeof(masterKey)];
+    char *encodedEncryptedMasterKey;
+    unsigned char derivedKey[KEY_LEN];
+    unsigned char salt[crypto_pwhash_SALTBYTES];
+    char *encodedSalt;
+    char *oldHash;
+    char hash[crypto_pwhash_STRBYTES];
+    char *pwd;
+    char line[LINE_LEN];
+    char **parsedFields;
+    size_t eSaltLen, eNonceLen, eEncMasterKeyLen;
+
+    // Reading the first database line
+    db = fopen(filename, "r");
+    fgets(line, LINE_LEN, db);
+    fclose(db);
+
+    // Parsing the line
+    parsedFields = parse_csv(line);
+    if(!parsedFields[0] || !parsedFields[1] || !parsedFields[2] || !parsedFields[3] || !parsedFields[4] || !parsedFields[5] || !parsedFields[6]){
+        printf("Malformed database. Exiting...\n");
+        exit(EXIT_FAILURE);
+    }
+    oldHash = parsedFields[0];
+
+    // Checking the password
+    pwd = sodium_malloc(PWD_LEN);
+    while(true){
+        printf("Master password: ");
+        scanf("%s", pwd);
+        printf("\n");
+        if (crypto_pwhash_str_verify(oldHash, pwd, strlen(pwd)) != 0) {
+            printf("Wrong password \n");
+            continue;
+        }
+        break;
+    }
+
+    // We don't need the password anymore. Freeing memory
+    sodium_memzero(pwd, PWD_LEN);
+
+    // Reading the new password
+    printf("Enter the new master password: ");
+    scanf("%s", pwd);
+    printf("\n");
+
+    // Generating new nonce and salt
+    randombytes_buf(nonce, sizeof(nonce));
+    randombytes_buf(salt, sizeof(salt));
+
+    // Hashing the new password
+    if(crypto_pwhash_str(hash, pwd, strlen(pwd), crypto_pwhash_OPSLIMIT_SENSITIVE, crypto_pwhash_MEMLIMIT_SENSITIVE) != 0){
+        sodium_free(pwd);
+        printf("Fatal error. Program ran out ouf memory. Exiting...\n");
+        exit(EXIT_FAILURE);
+    }
+
+    // Deriving a key to encrypt the master key
+    if (crypto_pwhash(derivedKey, sizeof(derivedKey), pwd, strlen(pwd), salt, crypto_pwhash_OPSLIMIT_SENSITIVE, crypto_pwhash_MEMLIMIT_SENSITIVE, crypto_pwhash_ALG_DEFAULT) != 0) {
+        sodium_free(pwd);
+        printf("Fatal error. Program ran out ouf memory. Exiting...\n");
+        exit(EXIT_FAILURE);
+    }
+
+    // We don't need the password anymore. Freeing memory
+    sodium_memzero(pwd, PWD_LEN);
+
+    // Encrypting the master key
+    crypto_secretbox_easy(encryptedMasterKey, masterKey, sizeof(masterKey), nonce, derivedKey);
+
+    // Encoding hash, salt and nonce
+    encodedSalt = base64_encode(salt, sizeof(salt), &eSaltLen);
+    encodedNonce = base64_encode(nonce, sizeof(nonce), &eNonceLen);
+    encodedEncryptedMasterKey = base64_encode(encryptedMasterKey, sizeof(encryptedMasterKey), &eEncMasterKeyLen);
+
+    // Writing into the database
+    db = fopen(filename, "r+");
+    fprintf(db, "%s;%ld;%s;%ld;%s;%ld;%s\n", hash, eSaltLen, encodedSalt, eNonceLen, encodedNonce, eEncMasterKeyLen, encodedEncryptedMasterKey);
+    fclose(db);
+
+    // Freeing the memory allocations and clearing memory
+    free_csv_line(parsedFields);
+    free(encodedSalt);
+    free(encodedNonce);
+    free(encodedEncryptedMasterKey);
+}
+
 int main() {
 
     init();
@@ -449,8 +539,7 @@ int main() {
 
             // Changing master password
             } else if (cmd == CHP) {
-
-                // TODO: implement changing
+                changePwd();
 
             // Listing
             } else if (cmd == LST) {
