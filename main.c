@@ -44,12 +44,13 @@ void init(){
 }
 
 void help(){
-    printf("[0] EXI: exists the program. \n");
-    printf("[1] CLO: closes the database. \n");
-    printf("[2] ADD: adds a password. \n");
-    printf("[3] DEL: deletes a password. \n");
-    printf("[4] CHP: changes the master password. \n");
-    printf("[5] LST: lists all passwords. \n");
+    printf("[%d] EXI: exists the program. \n", EXI);
+    printf("[%d] CLO: closes the database. \n", CLO);
+    printf("[%d] ADD: adds a password. \n", ADD);
+    printf("[%d] DEL: deletes a password. \n", DEL);
+    printf("[%d] SHW: shows a password. \n", SHW);
+    printf("[%d] CHP: changes the master password. \n", CHP);
+    printf("[%d] LST: lists all passwords. \n", LST);
 }
 
 void createDB(){
@@ -235,16 +236,54 @@ void add(){
 }
 
 void list(){
+    char *encodedEncPwd;
+    char *url;
+    char line[LINE_LEN];
+    char **parsedFields;
+
+    // Reading the database
+    db = fopen(filename, "r");
+    int lc = 0;
+    while(fgets(line, LINE_LEN, db) != NULL){
+        if(++lc == 1) continue;
+
+        // Parsing the line
+        parsedFields = parse_csv(line);
+        if(!parsedFields[0] || !parsedFields[1] || !parsedFields[2] || !parsedFields[3] || !parsedFields[4]){
+            printf("Malformed database. Exiting...\n");
+            exit(EXIT_FAILURE);
+        }
+        url = parsedFields[0];
+        encodedEncPwd = parsedFields[4];
+
+        // Showing the results
+        printf("%s\t%s\n", url, encodedEncPwd);
+
+        // Freeing memory
+        free_csv_line(parsedFields);
+    }
+    fclose(db);
+
+}
+
+void show(){
     unsigned char *nonce;
     unsigned char *encPwd;
     unsigned char pwd[PWD_LEN];
     char *encodedNonce;
     char *encodedEncPwd;
     char *url;
+    char searchedUrl[URL_LEN];
     size_t eNonceLen, eEncPwdLen;
     size_t nonceLen, encPwdLen;
     char line[LINE_LEN];
     char **parsedFields;
+    bool urlFound = false;
+
+    // Reading the url
+    printf("Enter an url: ");
+    scanf("%s", searchedUrl);
+    printf("\n");
 
     // Reading the database
     db = fopen(filename, "r");
@@ -264,6 +303,10 @@ void list(){
         eEncPwdLen = strtoul(parsedFields[3], NULL, 10);
         encodedEncPwd = parsedFields[4];
 
+        // Comparing url
+        if(strcmp(url, searchedUrl)!=0) continue;
+        urlFound = true;
+
         // Decoding the fields
         nonce = base64_decode(encodedNonce, eNonceLen, &nonceLen);
         encPwd = base64_decode(encodedEncPwd, eEncPwdLen, &encPwdLen);
@@ -275,7 +318,7 @@ void list(){
         }
 
         // Showing the results
-        printf("%s\t%s\n", url, pwd);
+        printf("Password for %s is: %s\n", url, pwd);
 
         // Freeing memory
         free_csv_line(parsedFields);
@@ -283,7 +326,7 @@ void list(){
         free(encPwd);
     }
     fclose(db);
-
+    if(!urlFound) printf("No password found for %s\n", searchedUrl);
 }
 
 int main() {
@@ -341,8 +384,16 @@ int main() {
             // Deleting
             } else if (cmd == DEL) {
 
+                // TODO: implement deleting
+
+            // Showing
+            } else if(cmd == SHW) {
+                show();
+
             // Changing master password
             } else if (cmd == CHP) {
+
+                // TODO: implement changing
 
             // Listing
             } else if (cmd == LST) {

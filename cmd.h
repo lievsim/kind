@@ -10,6 +10,7 @@ enum cmd {
     CLO,
     ADD,
     DEL,
+    SHW,
     CHP,
     LST
 };
