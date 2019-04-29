@@ -70,10 +70,12 @@ Enter the new master password: secret
 ```
 * **LST**: lists all entries in the database. Passwords are encrypted.
 ```text
-Enter a command [0-6]: 6
-myurl   N8sOeA5gtqRNvttm22xjsLeiwbaI3QqgpacNa8wtyeIuPajTMYkV3m6RmLweQvDqRXfׄ
-myurl2  xgGH+CcpC/gdGq1YKqtooiy7sX9uBogEhiWk20XPhV65xJY3Dd93TLKQ3JyQP9PtRXfׄ
-myurl3  3Q6f1jOgFWPD64tnJAbv7OX+aheCalIasUp2cbOXQvkgFYgYuXIFFNTYvWaEpXJ4RXf
+URL	PWD
+---------------------------------------------------------------------------------------
+www.google.com      SaCXC2oqEHfz73ZeoB5O5moJw3NrfvILAk0yQSf7UPvHEhFfipC8GJ2QQOMF1G3GRXfׄ
+www.hes-so.ch       XQwgTtFTUcj9Mh1kX/P49hY03dZLqCi5oeomvHkhAMztBjttM99a1SyrjkTeOyhfRXfׄ
+www.heia-fr.ch      k3nzB+9LOuTi9Pkqqs5QMiMpqEY4JD61TdKk9pMMYp2gEr04AtJ/jMaKoluMx8DJRXfׄ
+www.wikipedia.org   a4EID9e/Y+YlFhs5xOLzTyvK8Pe9x+H5iz9fjOkNj8u5w8uf8+ASRmnQ4YUjNqniRXfׄ
 ```
 
 ## License

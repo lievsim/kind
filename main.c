@@ -44,6 +44,7 @@ void init(){
 }
 
 void help(){
+    printf("\n");
     printf("[%d] EXI: exists the program. \n", EXI);
     printf("[%d] CLO: closes the database. \n", CLO);
     printf("[%d] ADD: adds a password. \n", ADD);
@@ -51,6 +52,7 @@ void help(){
     printf("[%d] SHW: shows a password. \n", SHW);
     printf("[%d] CHP: changes the master password. \n", CHP);
     printf("[%d] LST: lists all passwords. \n", LST);
+    printf("\n");
 }
 
 void createDB(){
@@ -79,8 +81,6 @@ void createDB(){
     pwd = sodium_malloc(PWD_LEN);
     printf("Enter a master password: ");
     scanf("%s", pwd);
-    printf("\n");
-
     // Hashing the password
     if(crypto_pwhash_str(hash, pwd, strlen(pwd), crypto_pwhash_OPSLIMIT_SENSITIVE, crypto_pwhash_MEMLIMIT_SENSITIVE) != 0){
         sodium_free(pwd);
@@ -161,9 +161,8 @@ void unlock(){
     // Checking the password
     pwd = sodium_malloc(PWD_LEN);
     while(true){
-        printf("Master password: ");
+        printf("Enter your master password: ");
         scanf("%s", pwd);
-        printf("\n");
         if (crypto_pwhash_str_verify(hash, pwd, strlen(pwd)) != 0) {
             printf("Wrong password \n");
             continue;
@@ -183,6 +182,7 @@ void unlock(){
 
     // Decrypting the master key
     if (crypto_secretbox_open_easy(masterKey, encryptedMasterKey, encMasterKeyLen, nonce, derivedKey) != 0) {
+        sodium_free(pwd);
         printf("Forged master key. Exiting...");
         exit(EXIT_FAILURE);
     }
@@ -204,13 +204,11 @@ void add(){
     size_t eNonceLen, eEncPwdLen;
 
     // Reading user inputs
-    printf("URL: ");
+    printf("Enter an url: ");
     scanf("%s", url);
-    printf("\n");
     pwd = sodium_malloc(PWD_LEN);
-    printf("PWD: ");
+    printf("Enter a password: ");
     scanf("%s", pwd);
-    printf("\n");
 
     // Generating a nonce
     randombytes_buf(nonce, sizeof nonce);
@@ -219,7 +217,7 @@ void add(){
     crypto_secretbox_easy(encryptedPwd, (unsigned char*)pwd, PWD_LEN, nonce, masterKey);
 
     // We don't need the password anymore. Freeing memory
-    sodium_free(pwd);
+    sodium_memzero(pwd, PWD_LEN);
 
     // Encoding nonce, encryptedPassword
     encodedNonce = base64_encode(nonce, sizeof(nonce), &eNonceLen);
@@ -244,12 +242,18 @@ void list(){
     // Reading the database
     db = fopen(filename, "r");
     int lc = 0;
+
+    // Header
+    printf("\nURL\tPWD\n");
+    printf("-------------------------------------------------------------------------------------------------------\n");
+
     while(fgets(line, LINE_LEN, db) != NULL){
         if(++lc == 1) continue;
 
         // Parsing the line
         parsedFields = parse_csv(line);
         if(!parsedFields[0] || !parsedFields[1] || !parsedFields[2] || !parsedFields[3] || !parsedFields[4]){
+            fclose(db);
             printf("Malformed database. Exiting...\n");
             exit(EXIT_FAILURE);
         }
@@ -257,7 +261,7 @@ void list(){
         encodedEncPwd = parsedFields[4];
 
         // Showing the results
-        printf("%s\t%s\n", url, encodedEncPwd);
+        printf("%s\t%s", url, encodedEncPwd);
 
         // Freeing memory
         free_csv_line(parsedFields);
@@ -282,7 +286,6 @@ void show(){
     // Reading the url
     printf("Enter an url: ");
     scanf("%s", searchedUrl);
-    printf("\n");
 
     // Reading the database
     db = fopen(filename, "r");
@@ -293,6 +296,7 @@ void show(){
         // Parsing the line
         parsedFields = parse_csv(line);
         if(!parsedFields[0] || !parsedFields[1] || !parsedFields[2] || !parsedFields[3] || !parsedFields[4]){
+            fclose(db);
             printf("Malformed database. Exiting...\n");
             exit(EXIT_FAILURE);
         }
@@ -312,6 +316,7 @@ void show(){
 
         // Decrypting the password
         if (crypto_secretbox_open_easy(pwd, encPwd, encPwdLen, nonce, masterKey) != 0) {
+            fclose(db);
             printf("Forged password. Exiting...");
             exit(EXIT_FAILURE);
         }
@@ -340,7 +345,6 @@ void delete(){
     // Reading the url
     printf("Enter an url: ");
     scanf("%s", searchedUrl);
-    printf("\n");
 
     // Reading the database
     strcpy(tmpFilename, filename);
@@ -355,6 +359,8 @@ void delete(){
             // Parsing the line
             parsedFields = parse_csv(line);
             if(!parsedFields[0] || !parsedFields[1] || !parsedFields[2] || !parsedFields[3] || !parsedFields[4]){
+                fclose(db);
+                fclose(tmp);
                 printf("Malformed database. Exiting...\n");
                 exit(EXIT_FAILURE);
             }
@@ -418,9 +424,8 @@ void changePwd(){
     // Checking the password
     pwd = sodium_malloc(PWD_LEN);
     while(true){
-        printf("Master password: ");
+        printf("Enter your master password: ");
         scanf("%s", pwd);
-        printf("\n");
         if (crypto_pwhash_str_verify(oldHash, pwd, strlen(pwd)) != 0) {
             printf("Wrong password \n");
             continue;
@@ -434,8 +439,6 @@ void changePwd(){
     // Reading the new password
     printf("Enter the new master password: ");
     scanf("%s", pwd);
-    printf("\n");
-
     // Generating new nonce and salt
     randombytes_buf(nonce, sizeof(nonce));
     randombytes_buf(salt, sizeof(salt));
@@ -507,17 +510,18 @@ int main() {
             while(true){
                 printf("Enter a command [%d-%d]: ", EXI, LST);
                 scanf("%d", &cmd);
-                printf("\n");
                 if(cmd < EXI || cmd > LST){
                     printf("Command unknown \n");
                     continue;
                 }
+                // Clearing the console
+                system("clear");
                 break;
             }
 
             // Exiting
             if (cmd == EXI) {
-                printf("Exiting...\n");
+                memset(masterKey, 0, sizeof(masterKey));
                 break;
 
             // Closing
@@ -540,6 +544,7 @@ int main() {
             // Changing master password
             } else if (cmd == CHP) {
                 changePwd();
+                state = LOCKED;
 
             // Listing
             } else if (cmd == LST) {
