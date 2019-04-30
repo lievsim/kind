@@ -12,8 +12,8 @@
 #define DB "/.kind/db.csv"
 #define KEY_LEN crypto_box_SEEDBYTES // crypto_secretbox_KEYBYTES
 #define PWD_LEN 32
-#define LINE_LEN 4096
-#define URL_LEN 128
+#define LINE_LEN 2096
+#define URL_LEN 64
 
 // Global variables
 char *filename;
@@ -338,59 +338,36 @@ void delete(){
     char searchedUrl[URL_LEN];
     char line[LINE_LEN];
     char **parsedFields;
-    FILE *tmp;
     char tmpFilename[strlen(filename)+4];
-    bool lineRemoved = false;
+    FILE *tmp;
 
     // Reading the url
     printf("Enter an url: ");
     scanf("%s", searchedUrl);
 
     // Reading the database
+    db = fopen(filename, "r");
     strcpy(tmpFilename, filename);
     strcat(tmpFilename, ".tmp");
     tmp = fopen(tmpFilename, "w");
-    db = fopen(filename, "r");
-    int lc = 0;
     while(fgets(line, LINE_LEN, db) != NULL){
 
-        if(++lc > 1){
+        // Parsing the line
+        parsedFields = parse_csv(line);
+        url = parsedFields[0];
 
-            // Parsing the line
-            parsedFields = parse_csv(line);
-            if(!parsedFields[0] || !parsedFields[1] || !parsedFields[2] || !parsedFields[3] || !parsedFields[4]){
-                fclose(db);
-                fclose(tmp);
-                printf("Malformed database. Exiting...\n");
-                exit(EXIT_FAILURE);
-            }
-            url = parsedFields[0];
-
-            // Comparing url
-            if(strcmp(url, searchedUrl)==0){
-                lineRemoved = true;
-                printf("%s was successfully removed\n", searchedUrl);
-                free_csv_line(parsedFields);
-                continue;
-            }
-            free_csv_line(parsedFields);
+        // Comparing url
+        if(strcmp(url, searchedUrl)!=0){
+            fprintf(tmp, "%s", line);
         }
-
-        // copying the line
-        fprintf(tmp, "%s", line);
+        free_csv_line(parsedFields);
     }
-    fclose(db);
     fclose(tmp);
-
-    if(!lineRemoved) printf("%s not found\n", searchedUrl);
+    fclose(db);
 
     // Deleting and removing files
-    if(remove(filename) == 0){
-        rename(tmpFilename, filename);
-    }else{
-        printf("Fatal error. An error occurs while manipulating te database file. Exiting...\n");
-        exit(EXIT_FAILURE);
-    }
+    remove(filename);
+    rename(tmpFilename, filename);
 }
 
 void changePwd(){
